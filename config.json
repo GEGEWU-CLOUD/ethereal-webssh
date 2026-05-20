@@ -1,0 +1,36 @@
+{
+  "groups": [
+    {
+      "id": 1,
+      "name": "默认分组",
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "name": "home",
+      "collapsed": false
+    }
+  ],
+  "servers": [
+    {
+      "id": 2,
+      "groupId": 2,
+      "name": "10.0.0.129",
+      "host": "10.0.0.129",
+      "port": 22,
+      "username": "root",
+      "password": "123"
+    },
+    {
+      "id": 3,
+      "groupId": 2,
+      "name": "10.0.0.128",
+      "host": "10.0.0.128",
+      "port": 22,
+      "username": "root",
+      "password": "123"
+    }
+  ],
+  "nextGroupId": 3,
+  "nextServerId": 4
+}

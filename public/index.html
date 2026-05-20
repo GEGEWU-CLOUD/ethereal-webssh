@@ -1,0 +1,2205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSSH - 现代化终端管理</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #0d1117;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: 'Inter', 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+            overflow: hidden;
+            color: #c9d1d9;
+            position: relative;
+        }
+        
+        /* 全局背景图层 */
+        .global-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: opacity 0.3s ease;
+        }
+        
+        /* 全局背景遮罩 */
+        .global-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: rgba(13, 17, 23, 0.7);
+            transition: background-color 0.3s ease;
+        }
+        
+        /* 主内容区域 */
+        .main-content {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* 左侧服务器树形目录 */
+        .servers-tree {
+            width: 280px;
+            min-width: 48px;
+            max-width: 500px;
+            background: rgba(22, 27, 34, 0.85);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(48, 54, 61, 0.8);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+        
+        .servers-tree.collapsed {
+            width: 48px;
+            min-width: 48px;
+        }
+        
+        .servers-tree.collapsed .tree-header h3 .tree-header-text,
+        .servers-tree.collapsed .tree-actions,
+        .servers-tree.collapsed .tree-content {
+            display: none;
+        }
+        
+        .servers-tree.collapsed .tree-header {
+            justify-content: center;
+            padding: 16px 0;
+        }
+        
+        .servers-tree.collapsed .tree-header h3 {
+            justify-content: center;
+            margin: 0;
+        }
+        
+        .resize-handle {
+            position: absolute;
+            right: -4px;
+            top: 0;
+            width: 8px;
+            height: 100%;
+            cursor: ew-resize;
+            background: transparent;
+            z-index: 20;
+            transition: background 0.2s;
+        }
+        
+        .resize-handle:hover {
+            background: #58a6ff;
+        }
+        
+        .resize-handle.active {
+            background: #58a6ff;
+        }
+        
+        .collapse-btn {
+            position: absolute;
+            right: -14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 56px;
+            background: rgba(33, 38, 45, 0.95);
+            border: 1px solid rgba(48, 54, 61, 0.8);
+            border-radius: 0 8px 8px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 21;
+            transition: all 0.2s;
+            color: #8b949e;
+            font-size: 14px;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.2);
+        }
+        
+        .collapse-btn:hover {
+            background: #2d333b;
+            color: #58a6ff;
+            border-color: #58a6ff;
+            width: 32px;
+            right: -16px;
+        }
+        
+        .servers-tree.collapsed .collapse-btn span {
+            transform: rotate(180deg);
+            display: inline-block;
+        }
+        
+        .servers-tree::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .servers-tree::-webkit-scrollbar-track {
+            background: rgba(22, 27, 34, 0.5);
+        }
+        
+        .servers-tree::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 3px;
+        }
+        
+        .tree-header {
+            padding: 16px 16px 12px;
+            background: rgba(22, 27, 34, 0.85);
+            border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .tree-header h3 {
+            color: #58a6ff;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: 0.3px;
+        }
+        
+        .tree-actions {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .tree-action-btn {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .tree-action-btn:hover {
+            background: rgba(33, 38, 45, 0.8);
+            color: #58a6ff;
+            transform: none;
+        }
+        
+        .tree-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        
+        .tree-node {
+            margin-bottom: 4px;
+        }
+        
+        .group-header {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            cursor: pointer;
+            border-radius: 6px;
+            background: transparent;
+            margin-bottom: 2px;
+            transition: background 0.15s ease;
+        }
+        
+        .group-header:hover {
+            background: rgba(33, 38, 45, 0.8);
+        }
+        
+        .group-toggle {
+            color: #8b949e;
+            font-size: 10px;
+            margin-right: 8px;
+            transition: transform 0.2s;
+        }
+        
+        .group-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+        
+        .group-icon {
+            margin-right: 8px;
+            font-size: 14px;
+        }
+        
+        .group-name {
+            color: #e6edf3;
+            font-size: 12px;
+            font-weight: 500;
+            flex: 1;
+        }
+        
+        .group-actions {
+            display: none;
+            gap: 4px;
+        }
+        
+        .group-header:hover .group-actions {
+            display: flex;
+        }
+        
+        .group-action {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 11px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        
+        .group-action:hover {
+            color: #58a6ff;
+            background: #30363d;
+        }
+        
+        .server-item {
+            padding: 6px 8px 6px 34px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            border-radius: 6px;
+            margin: 2px 0;
+            font-size: 12px;
+            transition: background 0.15s ease;
+        }
+        
+        .server-item:hover {
+            background: rgba(33, 38, 45, 0.8);
+        }
+        
+        .server-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        
+        .server-status.online {
+            background: #3fb950;
+            box-shadow: 0 0 6px #3fb950;
+        }
+        
+        .server-status.offline {
+            background: #f85149;
+        }
+        
+        .server-status.connecting {
+            background: #d29922;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .server-name {
+            color: #e6edf3;
+            flex: 1;
+            font-size: 12px;
+            font-weight: 400;
+        }
+        
+        .server-ip {
+            color: #8b949e;
+            font-size: 10px;
+            font-family: monospace;
+        }
+        
+        .server-actions {
+            display: none;
+            gap: 4px;
+        }
+        
+        .server-item:hover .server-actions {
+            display: flex;
+        }
+        
+        .server-action {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 11px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        
+        .server-action:hover {
+            color: #58a6ff;
+            background: #30363d;
+        }
+        
+        .group-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(48, 54, 61, 0.8);
+            padding-left: 8px;
+        }
+        
+        .group-children.collapsed {
+            display: none;
+        }
+        
+        /* 右键菜单 */
+        .context-menu {
+            position: fixed;
+            background: rgba(33, 38, 45, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            z-index: 1000;
+            min-width: 180px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            overflow: hidden;
+        }
+        
+        .context-menu-item {
+            padding: 8px 14px;
+            cursor: pointer;
+            color: #e6edf3;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.1s;
+        }
+        
+        .context-menu-item:hover {
+            background: rgba(45, 51, 59, 0.9);
+            color: #58a6ff;
+        }
+        
+        .context-menu-divider {
+            height: 1px;
+            background: #30363d;
+            margin: 4px 0;
+        }
+        
+        /* 右侧终端区域 */
+        .terminal-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: transparent;
+        }
+        
+        /* 标签栏 */
+        .tabs-header {
+            background: rgba(22, 27, 34, 0.85);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+            display: flex;
+            overflow-x: auto;
+            overflow-y: hidden;
+            flex-shrink: 0;
+            gap: 2px;
+            padding: 0 8px;
+            min-height: 42px;
+        }
+        
+        .tabs-header::-webkit-scrollbar {
+            height: 3px;
+        }
+        
+        .tab {
+            padding: 10px 16px;
+            background: rgba(33, 38, 45, 0.6);
+            color: #8b949e;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 140px;
+            max-width: 200px;
+            font-size: 12px;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-shrink: 0;
+        }
+        
+        .tab:hover {
+            color: #e6edf3;
+            background: rgba(45, 51, 59, 0.8);
+        }
+        
+        .tab.active {
+            color: #58a6ff;
+            border-bottom-color: #58a6ff;
+            background: rgba(33, 38, 45, 0.9);
+        }
+        
+        .tab-close {
+            margin-left: auto;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+        
+        .tab-close:hover {
+            color: #f85149;
+            background: #2d333b;
+        }
+        
+        /* 终端容器 */
+        .terminal-container {
+            flex: 1;
+            position: relative;
+            min-height: 0;
+            background: transparent;
+        }
+        
+        .terminal-pane {
+            display: none;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .terminal-pane.active {
+            display: block;
+        }
+        
+        .terminal-pane .xterm {
+            height: 100%;
+            padding: 8px;
+        }
+        
+        /* 终端背景透明 */
+        .xterm,
+        .xterm-viewport,
+        .xterm-screen {
+            background-color: transparent !important;
+        }
+        
+        .xterm .xterm-screen {
+            background-color: rgba(13, 17, 23, 0.6) !important;
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .xterm-viewport::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-track {
+            background: rgba(13, 17, 23, 0.3);
+        }
+        
+        .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 4px;
+        }
+        
+        /* 底部状态栏 */
+        .footer-bar {
+            background: rgba(22, 27, 34, 0.85);
+            backdrop-filter: blur(8px);
+            padding: 6px 16px;
+            font-size: 11px;
+            color: #8b949e;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid rgba(48, 54, 61, 0.8);
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        
+        /* 弹窗 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            width: 380px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        
+        .modal-content h4 {
+            color: #e6edf3;
+            margin-bottom: 20px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .modal-content label {
+            color: #8b949e;
+            font-size: 12px;
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        
+        .modal-content input, .modal-content select {
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            padding: 10px 12px;
+            margin-bottom: 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            transition: border 0.15s;
+        }
+        
+        .modal-content input:focus, .modal-content select:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+        
+        .modal-buttons button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        
+        .modal-buttons button:first-child {
+            background: #58a6ff;
+            color: #0d1117;
+        }
+        
+        .modal-buttons button:first-child:hover {
+            background: #79c0ff;
+        }
+        
+        .modal-buttons button:last-child {
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+        }
+        
+        .modal-buttons button:last-child:hover {
+            background: #30363d;
+            color: #e6edf3;
+        }
+        
+        /* 文件管理器 */
+        .file-manager {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 520px;
+            height: 100%;
+            background: rgba(22, 27, 34, 0.98);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(48, 54, 61, 0.8);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: -4px 0 24px rgba(0,0,0,0.3);
+        }
+        
+        .file-manager.open {
+            transform: translateX(0);
+        }
+        
+        .file-manager-header {
+            padding: 16px 20px;
+            background: rgba(22, 27, 34, 0.95);
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .file-manager-header h3 {
+            color: #e6edf3;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .close-file-manager {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            transition: all 0.15s;
+        }
+        
+        .close-file-manager:hover {
+            color: #f85149;
+            background: #21262d;
+        }
+        
+        .file-manager-toolbar {
+            padding: 12px 16px;
+            background: rgba(22, 27, 34, 0.95);
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .file-tool-btn {
+            background: rgba(33, 38, 45, 0.9);
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+        
+        .file-tool-btn:hover {
+            background: #2d333b;
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+        
+        .file-tool-btn.danger:hover {
+            color: #f85149;
+            border-color: #f85149;
+        }
+        
+        .current-path {
+            padding: 10px 16px;
+            background: rgba(13, 17, 23, 0.9);
+            color: #e6edf3;
+            font-size: 12px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            font-family: monospace;
+        }
+        
+        .path-input {
+            flex: 1;
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #58a6ff;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        
+        .file-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .file-item {
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            border-radius: 8px;
+            margin: 2px 0;
+            transition: background 0.15s;
+        }
+        
+        .file-item:hover {
+            background: rgba(33, 38, 45, 0.8);
+        }
+        
+        .file-item.selected {
+            background: #2d333b;
+        }
+        
+        .file-icon {
+            font-size: 18px;
+            width: 28px;
+        }
+        
+        .file-name {
+            flex: 1;
+            color: #e6edf3;
+            font-size: 13px;
+        }
+        
+        .file-size {
+            color: #8b949e;
+            font-size: 11px;
+            min-width: 70px;
+        }
+        
+        .file-time {
+            color: #6e7681;
+            font-size: 10px;
+            min-width: 130px;
+        }
+        
+        .file-actions {
+            display: none;
+            gap: 6px;
+        }
+        
+        .file-item:hover .file-actions {
+            display: flex;
+        }
+        
+        .file-action-btn {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        
+        .file-action-btn:hover {
+            color: #58a6ff;
+            background: #30363d;
+        }
+        
+        .upload-area {
+            padding: 12px 16px;
+            border-top: 1px solid #30363d;
+            background: rgba(22, 27, 34, 0.95);
+        }
+        
+        .upload-btn {
+            width: 100%;
+            padding: 10px;
+            background: #21262d;
+            border: 1px dashed #30363d;
+            color: #8b949e;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+        
+        .upload-btn:hover {
+            background: #2d333b;
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+        
+        .progress-bar {
+            margin-top: 8px;
+            height: 3px;
+            background: #21262d;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #58a6ff;
+            width: 0%;
+            transition: width 0.3s;
+            border-radius: 3px;
+        }
+        
+        .open-file-manager {
+            position: fixed;
+            right: 24px;
+            bottom: 80px;
+            background: #238636;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            font-size: 22px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 99;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .open-file-manager:hover {
+            transform: scale(1.05);
+            background: #2ea043;
+        }
+        
+        /* 猫咪容器 */
+        .cat-container {
+            position: fixed;
+            left: 16px;
+            bottom: 16px;
+            z-index: 100;
+            pointer-events: none;
+        }
+        
+        #live2d-widget {
+            pointer-events: auto;
+        }
+        
+        .cat-toggle-btn {
+            position: fixed;
+            left: 16px;
+            bottom: 16px;
+            width: 36px;
+            height: 36px;
+            background: rgba(33, 38, 45, 0.9);
+            border: 1px solid #30363d;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 102;
+            transition: all 0.2s;
+            color: #8b949e;
+            font-size: 18px;
+            opacity: 0;
+            transform: scale(0.8);
+        }
+        
+        .cat-toggle-btn:hover {
+            background: #2d333b;
+            color: #58a6ff;
+            border-color: #58a6ff;
+            transform: scale(1.1);
+        }
+        
+        .cat-toggle-btn.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+        
+        /* 背景设置面板 */
+        .bg-settings-btn {
+            position: fixed;
+            right: 24px;
+            bottom: 140px;
+            background: rgba(33, 38, 45, 0.9);
+            border: 1px solid #30363d;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 99;
+            transition: all 0.2s;
+            color: #8b949e;
+            font-size: 20px;
+        }
+        
+        .bg-settings-btn:hover {
+            background: #2d333b;
+            color: #58a6ff;
+            border-color: #58a6ff;
+            transform: scale(1.05);
+        }
+        
+        .bg-settings-panel {
+            position: fixed;
+            right: 24px;
+            bottom: 200px;
+            width: 300px;
+            background: rgba(33, 38, 45, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px;
+            z-index: 100;
+            display: none;
+        }
+        
+        .bg-settings-panel.open {
+            display: block;
+        }
+        
+        .bg-settings-panel h4 {
+            color: #e6edf3;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+        
+        .bg-settings-panel label {
+            color: #8b949e;
+            font-size: 12px;
+            display: block;
+            margin: 10px 0 5px;
+        }
+        
+        .bg-settings-panel input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+        
+        .bg-settings-panel input[type="file"] {
+            width: 100%;
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            padding: 6px;
+            border-radius: 6px;
+            font-size: 11px;
+        }
+        
+        .bg-settings-panel button {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .bg-settings-panel button:hover {
+            background: #2d333b;
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+        
+        .bg-preview {
+            width: 100%;
+            height: 80px;
+            background-size: cover;
+            background-position: center;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #30363d;
+        }
+        
+        .fullscreen-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(33, 38, 45, 0.95);
+            backdrop-filter: blur(8px);
+            color: #58a6ff;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 200;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            white-space: nowrap;
+            border: 1px solid #58a6ff;
+        }
+        
+        .fullscreen-hint.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+<!-- 全局背景图层 -->
+<div class="global-background" id="globalBackground"></div>
+<div class="global-overlay" id="globalOverlay"></div>
+
+<!-- 背景设置按钮 -->
+<div class="bg-settings-btn" id="bgSettingsBtn" title="背景设置">🎨</div>
+
+<!-- 背景设置面板 -->
+<div class="bg-settings-panel" id="bgSettingsPanel">
+    <h4>🎨 全局背景设置</h4>
+    <label>选择背景图片</label>
+    <input type="file" id="bgImageInput" accept="image/*">
+    <label>透明度</label>
+    <input type="range" id="bgOpacity" min="0" max="100" value="30">
+    <div class="bg-preview" id="bgPreview"></div>
+    <button id="resetBgBtn">重置默认背景</button>
+</div>
+
+<div class="main-content">
+    <div class="servers-tree" id="serversTree">
+        <div class="resize-handle" id="resizeHandle"></div>
+        <div class="collapse-btn" id="collapseBtn" title="收纳/展开侧边栏">
+            <span>◀</span>
+        </div>
+        <div class="tree-header">
+            <h3>
+                <span>📁</span>
+                <span class="tree-header-text">服务器目录</span>
+            </h3>
+            <div class="tree-actions">
+                <button class="tree-action-btn" onclick="showAddGroupModal()" title="添加分组">📁+</button>
+                <button class="tree-action-btn" onclick="showAddServerModal()" title="添加服务器">🖥️+</button>
+                <button class="tree-action-btn" onclick="exportConfig()" title="导出配置">📤</button>
+                <button class="tree-action-btn" onclick="document.getElementById('importFile').click()" title="导入配置">📥</button>
+                <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importConfig(this)">
+            </div>
+        </div>
+        <div class="tree-content" id="treeContent"></div>
+    </div>
+    
+    <div class="terminal-area">
+        <div class="tabs-header" id="tabsHeader">
+            <div id="tabsList" style="display: flex; flex-wrap: nowrap;"></div>
+        </div>
+        <div class="terminal-container" id="terminalContainer"></div>
+    </div>
+</div>
+
+<!-- 猫咪切换按钮 -->
+<div class="cat-toggle-btn" id="catToggleBtn" title="显示/隐藏猫咪">🐱</div>
+<div class="cat-container" id="catContainer"></div>
+
+<div class="footer-bar">
+    <span>💚 支持多服务器同时连接 | 右键服务器可打开多个终端 | 右键猫咪可隐藏/显示 | 🎨 可自定义背景</span>
+    <span>🔄 自动保活 | 崩溃自动重连</span>
+</div>
+
+<button class="open-file-manager" id="openFileManagerBtn" title="文件管理器">📁</button>
+
+<div class="file-manager" id="fileManager">
+    <div class="file-manager-header">
+        <h3>📁 文件管理器 <span id="fmServerName" style="font-size: 11px; color:#8b949e;"></span></h3>
+        <button class="close-file-manager" id="closeFileManagerBtn">✕</button>
+    </div>
+    <div class="file-manager-toolbar">
+        <button class="file-tool-btn" id="fmGoParent">📂 上级目录</button>
+        <button class="file-tool-btn" id="fmRefresh">🔄 刷新</button>
+        <button class="file-tool-btn" id="fmNewDir">📁 新建文件夹</button>
+        <button class="file-tool-btn danger" id="fmDelete">🗑️ 删除</button>
+    </div>
+    <div class="current-path">
+        <span>📍</span>
+        <input type="text" class="path-input" id="currentPathInput" readonly>
+    </div>
+    <div class="file-list" id="fileList"></div>
+    <div class="upload-area">
+        <div class="upload-btn" id="uploadBtn">📤 点击或拖拽文件上传</div>
+        <div class="progress-bar" id="uploadProgress" style="display: none;">
+            <div class="progress-fill"></div>
+        </div>
+        <input type="file" id="fileInput" multiple style="display: none;">
+    </div>
+</div>
+
+<div id="groupModal" class="modal">
+    <div class="modal-content">
+        <h4>添加分组</h4>
+        <input type="text" id="groupName" placeholder="分组名称">
+        <div class="modal-buttons">
+            <button onclick="addGroup()">确定</button>
+            <button onclick="closeModal('groupModal')">取消</button>
+        </div>
+    </div>
+</div>
+
+<div id="serverModal" class="modal">
+    <div class="modal-content">
+        <h4 id="serverModalTitle">添加服务器</h4>
+        <input type="hidden" id="editServerId">
+        <label>所属分组</label>
+        <select id="serverGroup"></select>
+        <label>服务器名称</label>
+        <input type="text" id="serverName" placeholder="服务器名称">
+        <label>IP地址</label>
+        <input type="text" id="serverHost" placeholder="IP地址">
+        <label>端口</label>
+        <input type="number" id="serverPort" placeholder="端口" value="22">
+        <label>用户名</label>
+        <input type="text" id="serverUsername" placeholder="用户名">
+        <label>密码</label>
+        <input type="password" id="serverPassword" placeholder="密码">
+        <div class="modal-buttons">
+            <button onclick="saveServer()">确定</button>
+            <button onclick="closeModal('serverModal')">取消</button>
+        </div>
+    </div>
+</div>
+
+<div id="moveServerModal" class="modal">
+    <div class="modal-content">
+        <h4>移动服务器到分组</h4>
+        <label>选择目标分组</label>
+        <select id="targetGroup"></select>
+        <div class="modal-buttons">
+            <button onclick="moveServer()">移动</button>
+            <button onclick="closeModal('moveServerModal')">取消</button>
+        </div>
+    </div>
+</div>
+
+<div id="fullscreenHint" class="fullscreen-hint"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    let socket = null;
+    let sessions = new Map();
+    let nextSessionId = 1;
+    let activeSessionId = null;
+    let moveServerId = null;
+    
+    let currentFileManagerSessionId = null;
+    let currentFilePath = '/';
+    let currentFileList = [];
+    
+    let groups = [];
+    let servers = [];
+    let nextGroupId = 1;
+    let nextServerId = 1;
+    
+    let contextMenu = null;
+    let catVisible = true;
+    
+    // ==================== 全局背景设置 ====================
+    
+    function initBackground() {
+        const bgLayer = document.getElementById('globalBackground');
+        const bgOpacity = document.getElementById('bgOpacity');
+        const bgImageInput = document.getElementById('bgImageInput');
+        const resetBgBtn = document.getElementById('resetBgBtn');
+        const bgPreview = document.getElementById('bgPreview');
+        const bgSettingsBtn = document.getElementById('bgSettingsBtn');
+        const bgSettingsPanel = document.getElementById('bgSettingsPanel');
+        
+        const savedBg = localStorage.getItem('global-bg-image');
+        const savedOpacity = localStorage.getItem('global-bg-opacity');
+        
+        if (savedBg && savedBg !== 'null') {
+            bgLayer.style.backgroundImage = `url(${savedBg})`;
+            bgPreview.style.backgroundImage = `url(${savedBg})`;
+        }
+        
+        if (savedOpacity) {
+            bgLayer.style.opacity = savedOpacity / 100;
+            bgOpacity.value = savedOpacity;
+        } else {
+            bgLayer.style.opacity = 0.3;
+            bgOpacity.value = 30;
+        }
+        
+        bgSettingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            bgSettingsPanel.classList.toggle('open');
+        });
+        
+        document.addEventListener('click', (e) => {
+            if (!bgSettingsPanel.contains(e.target) && e.target !== bgSettingsBtn) {
+                bgSettingsPanel.classList.remove('open');
+            }
+        });
+        
+        bgOpacity.addEventListener('input', (e) => {
+            bgLayer.style.opacity = e.target.value / 100;
+            localStorage.setItem('global-bg-opacity', e.target.value);
+        });
+        
+        bgImageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imgUrl = event.target.result;
+                    bgLayer.style.backgroundImage = `url(${imgUrl})`;
+                    bgPreview.style.backgroundImage = `url(${imgUrl})`;
+                    localStorage.setItem('global-bg-image', imgUrl);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        resetBgBtn.addEventListener('click', () => {
+            bgLayer.style.backgroundImage = '';
+            bgPreview.style.backgroundImage = '';
+            localStorage.removeItem('global-bg-image');
+            bgLayer.style.opacity = 0.3;
+            bgOpacity.value = 30;
+            localStorage.setItem('global-bg-opacity', '30');
+        });
+    }
+    
+    // ==================== 猫咪功能 ====================
+    
+    function initCat() {
+        const catContainer = document.getElementById('catContainer');
+        if (!catContainer) return;
+        
+        const savedCatVisible = localStorage.getItem('cat-visible');
+        if (savedCatVisible !== null) catVisible = savedCatVisible === 'true';
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/live2d-widget@3.1.4/lib/L2Dwidget.min.js';
+        script.onload = () => {
+            if (typeof window.L2Dwidget !== 'undefined') {
+                window.L2Dwidget.init({
+                    model: { jsonPath: "https://unpkg.com/live2d-widget-model-tororo@1.0.5/assets/tororo.model.json", scale: 1 },
+                    display: { position: "left", width: 150, height: 300, hOffset: 20, vOffset: -20 },
+                    mobile: { show: true, scale: 0.5 },
+                    react: { opacityDefault: 0.8, opacityOnHover: 0.4 }
+                });
+                setTimeout(() => {
+                    if (!catVisible) hideCat();
+                    updateCatToggleButton();
+                    setupCatContextMenu();
+                }, 1000);
+            }
+        };
+        catContainer.appendChild(script);
+    }
+    
+    function hideCat() {
+        const catWidget = document.querySelector('#live2d-widget');
+        if (catWidget) catWidget.style.display = 'none';
+        catVisible = false;
+        localStorage.setItem('cat-visible', 'false');
+        updateCatToggleButton();
+    }
+    
+    function showCat() {
+        const catWidget = document.querySelector('#live2d-widget');
+        if (catWidget) catWidget.style.display = 'block';
+        catVisible = true;
+        localStorage.setItem('cat-visible', 'true');
+        updateCatToggleButton();
+    }
+    
+    function toggleCat() { catVisible ? hideCat() : showCat(); }
+    
+    function updateCatToggleButton() {
+        const btn = document.getElementById('catToggleBtn');
+        if (btn) {
+            btn.title = catVisible ? '隐藏猫咪' : '显示猫咪';
+            btn.classList.add('visible');
+        }
+    }
+    
+    function showCatContextMenu(event) {
+        if (contextMenu) contextMenu.remove();
+        contextMenu = document.createElement('div');
+        contextMenu.className = 'context-menu';
+        contextMenu.style.left = event.pageX + 'px';
+        contextMenu.style.top = event.pageY + 'px';
+        contextMenu.innerHTML = `<div class="context-menu-item" onclick="toggleCat(); hideContextMenu();">${catVisible ? '🙈 隐藏猫咪' : '🐱 显示猫咪'}</div>`;
+        document.body.appendChild(contextMenu);
+        setTimeout(() => document.addEventListener('click', hideContextMenu), 0);
+    }
+    
+    function setupCatContextMenu() {
+        const checkInterval = setInterval(() => {
+            const catWidget = document.querySelector('#live2d-widget');
+            if (catWidget) {
+                clearInterval(checkInterval);
+                catWidget.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showCatContextMenu(e); });
+            }
+        }, 500);
+    }
+    
+    // ==================== 侧边栏调整大小 ====================
+    
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    
+    function initResizable() {
+        const sidebar = document.getElementById('serversTree');
+        const resizeHandle = document.getElementById('resizeHandle');
+        const collapseBtn = document.getElementById('collapseBtn');
+        
+        const savedWidth = localStorage.getItem('sidebar-width');
+        const savedCollapsed = localStorage.getItem('sidebar-collapsed');
+        
+        if (savedWidth && !sidebar.classList.contains('collapsed')) sidebar.style.width = savedWidth + 'px';
+        if (savedCollapsed === 'true') {
+            sidebar.classList.add('collapsed');
+            collapseBtn.querySelector('span').innerHTML = '▶';
+        } else {
+            collapseBtn.querySelector('span').innerHTML = '◀';
+        }
+        
+        collapseBtn.addEventListener('click', () => {
+            const isCollapsed = sidebar.classList.toggle('collapsed');
+            localStorage.setItem('sidebar-collapsed', isCollapsed);
+            collapseBtn.querySelector('span').innerHTML = isCollapsed ? '▶' : '◀';
+            if (!isCollapsed) {
+                const savedW = localStorage.getItem('sidebar-width');
+                if (savedW) sidebar.style.width = savedW + 'px';
+            }
+            setTimeout(() => {
+                if (activeSessionId && sessions.has(activeSessionId)) {
+                    const sess = sessions.get(activeSessionId);
+                    sess.fitAddon.fit();
+                    if (socket && sess.status === 'connected') {
+                        socket.emit('session-resize', { sessionId: activeSessionId, size: { rows: sess.term.rows, cols: sess.term.cols } });
+                    }
+                }
+            }, 300);
+        });
+        
+        resizeHandle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = sidebar.offsetWidth;
+            resizeHandle.classList.add('active');
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            let newWidth = startWidth + (e.clientX - startX);
+            newWidth = Math.min(500, Math.max(150, newWidth));
+            if (!sidebar.classList.contains('collapsed')) {
+                sidebar.style.width = newWidth + 'px';
+                localStorage.setItem('sidebar-width', newWidth);
+            }
+            if (activeSessionId && sessions.has(activeSessionId)) {
+                const sess = sessions.get(activeSessionId);
+                setTimeout(() => {
+                    sess.fitAddon.fit();
+                    if (socket && sess.status === 'connected') {
+                        socket.emit('session-resize', { sessionId: activeSessionId, size: { rows: sess.term.rows, cols: sess.term.cols } });
+                    }
+                }, 50);
+            }
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                resizeHandle.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+    
+    // ==================== 配置持久化 ====================
+    
+    async function loadConfigFromServer() {
+        try {
+            const response = await fetch('/api/config');
+            const config = await response.json();
+            if (config.groups && config.groups.length > 0) {
+                groups = config.groups;
+                servers = config.servers;
+                nextGroupId = config.nextGroupId || Math.max(...groups.map(g => g.id), 0) + 1;
+                nextServerId = config.nextServerId || Math.max(...servers.map(s => s.id), 0) + 1;
+            } else setDefaultConfig();
+            renderTree();
+        } catch (err) { loadDataFromLocal(); }
+    }
+    
+    function loadDataFromLocal() {
+        const savedGroups = localStorage.getItem('webssh-groups');
+        const savedServers = localStorage.getItem('webssh-servers');
+        if (savedGroups) { try { groups = JSON.parse(savedGroups); nextGroupId = Math.max(...groups.map(g => g.id), 0) + 1; } catch(e) {} }
+        if (savedServers) { try { servers = JSON.parse(savedServers); nextServerId = Math.max(...servers.map(s => s.id), 0) + 1; } catch(e) {} }
+        if (groups.length === 0) setDefaultConfig();
+        renderTree();
+    }
+    
+    function setDefaultConfig() {
+        groups = [
+            { id: nextGroupId++, name: '默认分组', collapsed: false },
+            { id: nextGroupId++, name: '生产环境', collapsed: false },
+            { id: nextGroupId++, name: '测试环境', collapsed: false }
+        ];
+        servers = [
+            { id: nextServerId++, groupId: 1, name: '测试服务器1', host: '10.0.0.128', port: 22, username: 'root', password: '' },
+            { id: nextServerId++, groupId: 1, name: '测试服务器2', host: '10.0.0.129', port: 22, username: 'root', password: '' }
+        ];
+        saveConfigToServer();
+    }
+    
+    async function saveConfigToServer() {
+        const config = { groups, servers, nextGroupId, nextServerId };
+        try {
+            const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+            const result = await response.json();
+            if (!result.success) saveDataToLocal();
+        } catch (err) { saveDataToLocal(); }
+    }
+    
+    function saveDataToLocal() {
+        localStorage.setItem('webssh-groups', JSON.stringify(groups));
+        localStorage.setItem('webssh-servers', JSON.stringify(servers));
+    }
+    
+    async function exportConfig() {
+        try {
+            const response = await fetch('/api/config/export');
+            const config = await response.json();
+            const dataStr = JSON.stringify(config, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `webssh-config-${new Date().toISOString().slice(0,19)}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+            alert('配置导出成功！');
+        } catch (err) { alert('导出失败: ' + err.message); }
+    }
+    
+    async function importConfig(fileInput) {
+        const file = fileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const importedConfig = JSON.parse(e.target.result);
+                if (!importedConfig.groups || !importedConfig.servers) { alert('配置文件格式错误'); return; }
+                const response = await fetch('/api/config/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(importedConfig) });
+                const result = await response.json();
+                if (result.success) {
+                    groups = result.config.groups; servers = result.config.servers;
+                    nextGroupId = result.config.nextGroupId; nextServerId = result.config.nextServerId;
+                    renderTree();
+                    alert('配置导入成功！');
+                } else alert('导入失败: ' + result.message);
+            } catch (err) { alert('导入失败: ' + err.message); }
+            fileInput.value = '';
+        };
+        reader.readAsText(file);
+    }
+    
+    function saveData() { saveConfigToServer(); saveDataToLocal(); }
+    
+    // ==================== 渲染树形目录 ====================
+    
+    function renderTree() {
+        const container = document.getElementById('treeContent');
+        if (!container) return;
+        container.innerHTML = '';
+        
+        groups.forEach(group => {
+            const groupServers = servers.filter(s => s.groupId === group.id);
+            const groupNode = document.createElement('div');
+            groupNode.className = 'tree-node';
+            groupNode.innerHTML = `
+                <div class="group-header" onclick="toggleGroup(${group.id})">
+                    <span class="group-toggle ${group.collapsed ? 'collapsed' : ''}">▼</span>
+                    <span class="group-icon">📁</span>
+                    <span class="group-name">${escapeHtml(group.name)}</span>
+                    <span style="color:#8b949e; font-size:10px;">(${groupServers.length})</span>
+                    <div class="group-actions">
+                        <button class="group-action" onclick="event.stopPropagation(); showEditGroupModal(${group.id})">✏️</button>
+                        <button class="group-action" onclick="event.stopPropagation(); deleteGroup(${group.id})">🗑️</button>
+                    </div>
+                </div>
+                <div class="group-children ${group.collapsed ? 'collapsed' : ''}" id="group-${group.id}"></div>
+            `;
+            container.appendChild(groupNode);
+            
+            const childrenContainer = groupNode.querySelector(`#group-${group.id}`);
+            groupServers.forEach(server => {
+                const serverDiv = document.createElement('div');
+                serverDiv.className = 'server-item';
+                serverDiv.innerHTML = `
+                    <span class="server-status ${getServerStatus(server.id)}" id="server-status-${server.id}"></span>
+                    <span class="server-name">${escapeHtml(server.name)}</span>
+                    <span class="server-ip">${escapeHtml(server.host)}</span>
+                    <div class="server-actions">
+                        <button class="server-action" onclick="event.stopPropagation(); connectToServer(${server.id})" title="连接">🔌</button>
+                        <button class="server-action" onclick="event.stopPropagation(); showEditServerModal(${server.id})" title="编辑">✏️</button>
+                        <button class="server-action" onclick="event.stopPropagation(); showMoveServerModal(${server.id})" title="移动到分组">📂</button>
+                        <button class="server-action" onclick="event.stopPropagation(); duplicateTerminal(${server.id})" title="新建终端">➕</button>
+                        <button class="server-action" onclick="event.stopPropagation(); deleteServer(${server.id})" title="删除">🗑️</button>
+                    </div>
+                `;
+                serverDiv.onclick = (e) => { if (!e.target.classList.contains('server-action')) connectToServer(server.id); };
+                serverDiv.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); showServerContextMenu(e, server); };
+                childrenContainer.appendChild(serverDiv);
+            });
+            if (groupServers.length === 0) {
+                const emptyDiv = document.createElement('div');
+                emptyDiv.style.padding = '8px 0 8px 28px';
+                emptyDiv.style.color = '#8b949e';
+                emptyDiv.style.fontSize = '11px';
+                emptyDiv.innerText = '暂无服务器，点击上方➕添加';
+                childrenContainer.appendChild(emptyDiv);
+            }
+        });
+    }
+    
+    function showServerContextMenu(event, server) {
+        if (contextMenu) contextMenu.remove();
+        contextMenu = document.createElement('div');
+        contextMenu.className = 'context-menu';
+        contextMenu.style.left = event.pageX + 'px';
+        contextMenu.style.top = event.pageY + 'px';
+        contextMenu.innerHTML = `
+            <div class="context-menu-item" onclick="connectToServer(${server.id}); hideContextMenu();">🔌 连接</div>
+            <div class="context-menu-item" onclick="duplicateTerminal(${server.id}); hideContextMenu();">➕ 新建终端 (新标签页)</div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" onclick="showEditServerModal(${server.id}); hideContextMenu();">✏️ 编辑</div>
+            <div class="context-menu-item" onclick="showMoveServerModal(${server.id}); hideContextMenu();">📂 移动到分组</div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" onclick="duplicateServer(${server.id}); hideContextMenu();">📋 复制服务器</div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" onclick="deleteServer(${server.id}); hideContextMenu();" style="color:#f85149;">🗑️ 删除</div>
+        `;
+        document.body.appendChild(contextMenu);
+        setTimeout(() => document.addEventListener('click', hideContextMenu), 0);
+    }
+    
+    function showTerminalContextMenu(event, server) {
+        if (contextMenu) contextMenu.remove();
+        contextMenu = document.createElement('div');
+        contextMenu.className = 'context-menu';
+        contextMenu.style.left = event.pageX + 'px';
+        contextMenu.style.top = event.pageY + 'px';
+        contextMenu.innerHTML = `
+            <div class="context-menu-item" onclick="duplicateTerminal(${server.id}); hideContextMenu();">➕ 新建终端 (新标签页)</div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" onclick="location.reload(); hideContextMenu();">🔄 刷新页面</div>
+        `;
+        document.body.appendChild(contextMenu);
+        setTimeout(() => document.addEventListener('click', hideContextMenu), 0);
+    }
+    
+    function duplicateTerminal(serverId) {
+        const server = servers.find(s => s.id === serverId);
+        if (server) createTerminalTab(server);
+    }
+    
+    function getServerStatus(serverId) {
+        for (const [sessionId, session] of sessions) {
+            if (session.serverId === serverId && session.status === 'connected') return 'online';
+            if (session.serverId === serverId && session.status === 'connecting') return 'connecting';
+        }
+        return 'offline';
+    }
+    
+    function updateServerStatusUI(serverId, status) {
+        const statusSpan = document.getElementById(`server-status-${serverId}`);
+        if (statusSpan) statusSpan.className = `server-status ${status}`;
+    }
+    
+    function hideContextMenu() {
+        if (contextMenu) { contextMenu.remove(); contextMenu = null; }
+        document.removeEventListener('click', hideContextMenu);
+    }
+    
+    function duplicateServer(serverId) {
+        const original = servers.find(s => s.id === serverId);
+        if (original) {
+            servers.push({ id: nextServerId++, groupId: original.groupId, name: `${original.name} (副本)`, host: original.host, port: original.port, username: original.username, password: original.password });
+            saveData(); renderTree();
+        }
+    }
+    
+    function toggleGroup(groupId) {
+        const group = groups.find(g => g.id === groupId);
+        if (group) { group.collapsed = !group.collapsed; saveData(); renderTree(); }
+    }
+    
+    function showAddGroupModal() { document.getElementById('groupName').value = ''; document.getElementById('groupModal').classList.add('active'); }
+    function addGroup() {
+        const name = document.getElementById('groupName').value.trim();
+        if (name) { groups.push({ id: nextGroupId++, name: name, collapsed: false }); saveData(); renderTree(); closeModal('groupModal'); }
+    }
+    function showEditGroupModal(groupId) {
+        const group = groups.find(g => g.id === groupId);
+        if (group) { const newName = prompt('修改分组名称:', group.name); if (newName && newName.trim()) { group.name = newName.trim(); saveData(); renderTree(); } }
+    }
+    function deleteGroup(groupId) {
+        const group = groups.find(g => g.id === groupId);
+        if (group && confirm(`确定要删除分组 "${group.name}" 及其所有服务器吗？`)) {
+            const groupServers = servers.filter(s => s.groupId === groupId);
+            groupServers.forEach(server => { for (const [sessionId, session] of sessions) { if (session.serverId === server.id) closeTerminalTab(sessionId); } });
+            servers = servers.filter(s => s.groupId !== groupId);
+            groups = groups.filter(g => g.id !== groupId);
+            saveData(); renderTree();
+        }
+    }
+    
+    function showAddServerModal() {
+        document.getElementById('serverModalTitle').innerText = '添加服务器';
+        document.getElementById('editServerId').value = '';
+        updateGroupSelect('serverGroup');
+        document.getElementById('serverName').value = '';
+        document.getElementById('serverHost').value = '';
+        document.getElementById('serverPort').value = '22';
+        document.getElementById('serverUsername').value = 'root';
+        document.getElementById('serverPassword').value = '';
+        document.getElementById('serverModal').classList.add('active');
+    }
+    
+    function showEditServerModal(serverId) {
+        const server = servers.find(s => s.id === serverId);
+        if (!server) return;
+        document.getElementById('serverModalTitle').innerText = '编辑服务器';
+        document.getElementById('editServerId').value = server.id;
+        updateGroupSelect('serverGroup', server.groupId);
+        document.getElementById('serverName').value = server.name;
+        document.getElementById('serverHost').value = server.host;
+        document.getElementById('serverPort').value = server.port;
+        document.getElementById('serverUsername').value = server.username;
+        document.getElementById('serverPassword').value = server.password;
+        document.getElementById('serverModal').classList.add('active');
+    }
+    
+    function updateGroupSelect(selectId, selectedId = null) {
+        const select = document.getElementById(selectId);
+        select.innerHTML = '';
+        groups.forEach(group => {
+            const option = document.createElement('option');
+            option.value = group.id;
+            option.textContent = group.name;
+            if (selectedId === group.id) option.selected = true;
+            select.appendChild(option);
+        });
+    }
+    
+    function saveServer() {
+        const editId = document.getElementById('editServerId').value;
+        const groupId = parseInt(document.getElementById('serverGroup').value);
+        const name = document.getElementById('serverName').value.trim();
+        const host = document.getElementById('serverHost').value.trim();
+        const port = parseInt(document.getElementById('serverPort').value);
+        const username = document.getElementById('serverUsername').value.trim();
+        const password = document.getElementById('serverPassword').value;
+        
+        if (name && host && username) {
+            if (editId) {
+                const server = servers.find(s => s.id === parseInt(editId));
+                if (server) { server.groupId = groupId; server.name = name; server.host = host; server.port = port; server.username = username; server.password = password; saveData(); renderTree(); }
+            } else {
+                servers.push({ id: nextServerId++, groupId, name, host, port, username, password });
+                saveData(); renderTree();
+            }
+            closeModal('serverModal');
+        } else alert('请填写必要信息');
+    }
+    
+    function deleteServer(serverId) {
+        if (confirm('确定要删除这个服务器吗？')) {
+            for (const [sessionId, session] of sessions) { if (session.serverId === serverId) closeTerminalTab(sessionId); }
+            servers = servers.filter(s => s.id !== serverId);
+            saveData(); renderTree();
+        }
+    }
+    
+    function showMoveServerModal(serverId) {
+        moveServerId = serverId;
+        const server = servers.find(s => s.id === serverId);
+        const targetSelect = document.getElementById('targetGroup');
+        targetSelect.innerHTML = '';
+        groups.forEach(group => { if (group.id !== server.groupId) { const option = document.createElement('option'); option.value = group.id; option.textContent = group.name; targetSelect.appendChild(option); } });
+        if (targetSelect.options.length === 0) { alert('没有其他分组可移动'); return; }
+        document.getElementById('moveServerModal').classList.add('active');
+    }
+    
+    function moveServer() {
+        if (!moveServerId) return;
+        const targetGroupId = parseInt(document.getElementById('targetGroup').value);
+        const server = servers.find(s => s.id === moveServerId);
+        if (server && targetGroupId) { server.groupId = targetGroupId; saveData(); renderTree(); closeModal('moveServerModal'); moveServerId = null; }
+    }
+    
+    function connectToServer(serverId) {
+        const server = servers.find(s => s.id === serverId);
+        if (!server) return;
+        if (!server.host || !server.username) { alert('请填写服务器信息'); showEditServerModal(serverId); return; }
+        createTerminalTab(server);
+    }
+    
+    // ==================== 核心：创建终端标签页（修复 vim 显示问题）====================
+    
+    function createTerminalTab(server) {
+        const sessionId = `session_${nextSessionId++}`;
+        const tabId = `tab_${sessionId}`;
+        const paneId = `pane_${sessionId}`;
+        
+        const tabsContainer = document.getElementById('tabsList');
+        const tab = document.createElement('div');
+        tab.className = 'tab';
+        tab.id = tabId;
+        const existingCount = Array.from(sessions.values()).filter(s => s.serverId === server.id).length;
+        const displayName = existingCount > 0 ? `${server.name} (${existingCount + 1})` : server.name;
+        tab.innerHTML = `<span>🖥️ ${escapeHtml(displayName)}</span><span class="tab-close" onclick="event.stopPropagation(); closeTerminalTab('${sessionId}')">✕</span>`;
+        tab.onclick = () => switchToTab(sessionId);
+        tabsContainer.appendChild(tab);
+        
+        const container = document.getElementById('terminalContainer');
+        const pane = document.createElement('div');
+        pane.className = 'terminal-pane';
+        pane.id = paneId;
+        container.appendChild(pane);
+        
+        // 获取终端容器的实际像素尺寸
+        const getTerminalSize = () => {
+            const rect = pane.getBoundingClientRect();
+            const estimatedCols = Math.max(80, Math.floor(rect.width / 9));
+            const estimatedRows = Math.max(24, Math.floor(rect.height / 18));
+            return { cols: estimatedCols, rows: estimatedRows };
+        };
+        
+        const initialSize = getTerminalSize();
+        console.log(`创建终端 ${displayName}: ${initialSize.cols}x${initialSize.rows}`);
+        
+        const term = new Terminal({ 
+            cursorBlink: true, 
+            fontSize: 13, 
+            fontFamily: 'SF Mono, Monaco, "Fira Code", Consolas, monospace',
+            theme: { 
+                background: 'transparent',
+                foreground: '#c9d1d9', 
+                cursor: '#58a6ff',
+                cursorAccent: '#58a6ff',
+                selection: '#264f78'
+            }, 
+            scrollback: 10000,
+            cols: initialSize.cols,
+            rows: initialSize.rows
+        });
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(pane);
+        
+        // 确保终端尺寸正确
+        const doResize = () => {
+            try {
+                fitAddon.fit();
+                const newSize = getTerminalSize();
+                if (socket && socket.connected && sessions.has(sessionId)) {
+                    const sess = sessions.get(sessionId);
+                    if (sess && sess.status === 'connected') {
+                        socket.emit('session-resize', { 
+                            sessionId: sessionId, 
+                            size: { rows: term.rows, cols: term.cols } 
+                        });
+                    }
+                }
+            } catch(e) { console.log('resize error:', e); }
+        };
+        
+        // 多次调用确保尺寸正确（解决 vim 显示问题）
+        setTimeout(doResize, 50);
+        setTimeout(doResize, 200);
+        setTimeout(doResize, 500);
+        setTimeout(doResize, 1000);
+        
+        // 监听终端 resize 事件
+        term.onResize((size) => {
+            if (socket && socket.connected && sessions.has(sessionId)) {
+                const sess = sessions.get(sessionId);
+                if (sess && sess.status === 'connected') {
+                    socket.emit('session-resize', { sessionId, size: { rows: size.rows, cols: size.cols } });
+                }
+            }
+        });
+        
+        sessions.set(sessionId, { term, fitAddon, config: server, status: 'connecting', tabId, paneId, serverId: server.id, sessionId, sftpReady: false });
+        
+        const resizeHandler = () => {
+            if (activeSessionId === sessionId && sessions.has(sessionId)) {
+                const sess = sessions.get(sessionId);
+                sess.fitAddon.fit();
+                if (socket && sess.status === 'connected') {
+                    socket.emit('session-resize', { sessionId, size: { rows: sess.term.rows, cols: sess.term.cols } });
+                }
+            }
+        };
+        window.addEventListener('resize', resizeHandler);
+        sessions.get(sessionId).resizeHandler = resizeHandler;
+        
+        term.onData((data) => {
+            if (socket && sessions.has(sessionId)) {
+                const sess = sessions.get(sessionId);
+                if (sess.status === 'connected') socket.emit('session-command', { sessionId, command: data });
+            }
+        });
+        
+        term.writeln('\x1b[38;2;88;166;255m╔════════════════════════════════════╗\x1b[0m');
+        term.writeln('\x1b[38;2;88;166;255m║   WebSSH 现代化终端管理           ║\x1b[0m');
+        term.writeln('\x1b[38;2;88;166;255m╚════════════════════════════════════╝\x1b[0m');
+        term.writeln('');
+        term.writeln(`\x1b[38;2;210;153;34m📡 正在连接到 ${server.username}@${server.host}:${server.port} ...\x1b[0m`);
+        
+        if (socket && socket.connected) {
+            socket.emit('session-connect', { sessionId, config: { host: server.host, port: server.port, username: server.username, password: server.password } });
+        }
+        
+        switchToTab(sessionId);
+        updateServerStatusUI(server.id, 'connecting');
+        
+        // 为终端添加右键菜单
+        setTimeout(() => {
+            const textarea = term.textarea;
+            if (textarea) {
+                textarea.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    showTerminalContextMenu(e, server);
+                });
+            }
+        }, 500);
+    }
+    
+    function switchToTab(sessionId) {
+        if (!sessions.has(sessionId)) return;
+        activeSessionId = sessionId;
+        document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+        const sess = sessions.get(sessionId);
+        document.getElementById(sess.tabId).classList.add('active');
+        document.querySelectorAll('.terminal-pane').forEach(pane => pane.classList.remove('active'));
+        document.getElementById(sess.paneId).classList.add('active');
+        setTimeout(() => {
+            if (sessions.has(sessionId)) {
+                const s = sessions.get(sessionId);
+                s.fitAddon.fit();
+                if (socket && s.status === 'connected') {
+                    socket.emit('session-resize', { sessionId, size: { rows: s.term.rows, cols: s.term.cols } });
+                }
+            }
+        }, 100);
+    }
+    
+    function closeTerminalTab(sessionId) {
+        if (!sessions.has(sessionId)) return;
+        const sess = sessions.get(sessionId);
+        if (socket && socket.connected) socket.emit('session-disconnect', { sessionId });
+        if (sess.resizeHandler) window.removeEventListener('resize', sess.resizeHandler);
+        const tab = document.getElementById(sess.tabId);
+        if (tab) tab.remove();
+        const pane = document.getElementById(sess.paneId);
+        if (pane) pane.remove();
+        if (sess.term) sess.term.dispose();
+        sessions.delete(sessionId);
+        updateServerStatusUI(sess.serverId, 'offline');
+        if (activeSessionId === sessionId) {
+            const remainingSessions = Array.from(sessions.keys());
+            if (remainingSessions.length > 0) switchToTab(remainingSessions[0]);
+            else activeSessionId = null;
+        }
+    }
+    
+    // ==================== 文件管理器功能 ====================
+    
+    function openFileManager(sessionId, serverName) {
+        const sess = sessions.get(sessionId);
+        if (!sess || !sess.sftpReady) { alert('SFTP未就绪'); return; }
+        currentFileManagerSessionId = sessionId;
+        currentFilePath = '/';
+        document.getElementById('fmServerName').innerText = serverName;
+        document.getElementById('fileManager').classList.add('open');
+        loadFileList();
+    }
+    
+    function closeFileManager() { document.getElementById('fileManager').classList.remove('open'); currentFileManagerSessionId = null; }
+    
+    function loadFileList() {
+        if (!currentFileManagerSessionId || !socket) return;
+        socket.emit('sftp-list', { sessionId: currentFileManagerSessionId, path: currentFilePath }, (response) => {
+            if (response.error) { document.getElementById('fileList').innerHTML = `<div style="padding:20px;color:#f85149;">错误: ${response.error}</div>`; return; }
+            currentFileList = response.files;
+            document.getElementById('currentPathInput').value = response.currentPath;
+            renderFileList(response.files);
+        });
+    }
+    
+    function renderFileList(files) {
+        const container = document.getElementById('fileList');
+        container.innerHTML = '';
+        files.sort((a, b) => {
+            if (a.type === b.type) return a.name.localeCompare(b.name);
+            return a.type === 'directory' ? -1 : 1;
+        });
+        files.forEach(file => {
+            const fileDiv = document.createElement('div');
+            fileDiv.className = 'file-item';
+            fileDiv.setAttribute('data-name', file.name);
+            fileDiv.setAttribute('data-type', file.type);
+            const icon = file.type === 'directory' ? '📁' : getFileIcon(file.name);
+            const sizeStr = file.type === 'file' ? formatFileSize(file.size) : '-';
+            const timeStr = file.modifyTime ? new Date(file.modifyTime).toLocaleString() : '';
+            fileDiv.innerHTML = `
+                <div class="file-icon">${icon}</div>
+                <div class="file-name">${escapeHtml(file.name)}</div>
+                <div class="file-size">${sizeStr}</div>
+                <div class="file-time">${timeStr}</div>
+                <div class="file-actions">
+                    ${file.type === 'file' ? '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(\'' + escapeHtml(file.name) + '\')">⬇️ 下载</button>' : ''}
+                    <button class="file-action-btn" onclick="event.stopPropagation(); renameFile(\'' + escapeHtml(file.name) + '\')">✏️ 重命名</button>
+                </div>
+            `;
+            if (file.type === 'directory') {
+                fileDiv.ondblclick = () => {
+                    currentFilePath = currentFilePath === '/' ? `/${file.name}` : `${currentFilePath}/${file.name}`;
+                    loadFileList();
+                };
+            }
+            container.appendChild(fileDiv);
+        });
+    }
+    
+    function getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const icons = { 'js': '📜', 'html': '🌐', 'css': '🎨', 'json': '📋', 'py': '🐍', 'java': '☕', 'txt': '📝', 'md': '📝', 'pdf': '📕', 'zip': '📦', 'jpg': '🖼️', 'png': '🖼️', 'sh': '🐚' };
+        return icons[ext] || '📄';
+    }
+    
+    function uploadFiles(files) {
+        if (!currentFileManagerSessionId || !socket) return;
+        const progressBar = document.getElementById('uploadProgress');
+        progressBar.style.display = 'block';
+        const progressFill = document.querySelector('.progress-fill');
+        let currentFileIndex = 0, totalSize = 0, uploadedSize = 0;
+        for (let i = 0; i < files.length; i++) totalSize += files[i].size;
+        
+        function uploadNextFile() {
+            if (currentFileIndex >= files.length) {
+                setTimeout(() => { progressBar.style.display = 'none'; progressFill.style.width = '0%'; loadFileList(); }, 500);
+                return;
+            }
+            const file = files[currentFileIndex];
+            const CHUNK_SIZE = 1024 * 1024;
+            let offset = 0;
+            socket.emit('sftp-upload-start', { sessionId: currentFileManagerSessionId, remotePath: currentFilePath, fileName: file.name, fileSize: file.size });
+            
+            function readNextChunk() {
+                const slice = file.slice(offset, offset + CHUNK_SIZE);
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const chunk = new Uint8Array(e.target.result);
+                    socket.emit('sftp-upload-data', { sessionId: currentFileManagerSessionId, data: Array.from(chunk) });
+                    offset += chunk.length;
+                    uploadedSize += chunk.length;
+                    progressFill.style.width = (uploadedSize / totalSize) * 100 + '%';
+                    if (offset < file.size) setTimeout(readNextChunk, 5);
+                    else { socket.emit('sftp-upload-end', { sessionId: currentFileManagerSessionId }); currentFileIndex++; uploadNextFile(); }
+                };
+                reader.readAsArrayBuffer(slice);
+            }
+            readNextChunk();
+        }
+        uploadNextFile();
+    }
+    
+    function downloadFile(fileName) {
+        if (!currentFileManagerSessionId || !socket) return;
+        const remotePath = currentFilePath === '/' ? `/${fileName}` : `${currentFilePath}/${fileName}`;
+        socket.emit('sftp-download', { sessionId: currentFileManagerSessionId, remotePath });
+    }
+    
+    function deleteSelected() {
+        const selected = document.querySelector('.file-item.selected');
+        if (!selected) { alert('请先点击选中要删除的文件/目录'); return; }
+        const fileName = selected.getAttribute('data-name');
+        const fileType = selected.getAttribute('data-type');
+        const targetPath = currentFilePath === '/' ? `/${fileName}` : `${currentFilePath}/${fileName}`;
+        if (confirm(`确定要删除 ${fileName} 吗？`)) {
+            socket.emit('sftp-delete', { sessionId: currentFileManagerSessionId, path: targetPath, isDirectory: fileType === 'directory' }, (response) => {
+                if (response.error) alert('删除失败: ' + response.error);
+                else loadFileList();
+            });
+        }
+    }
+    
+    function newDirectory() {
+        const name = prompt('请输入文件夹名称:');
+        if (!name) return;
+        const targetPath = currentFilePath === '/' ? `/${name}` : `${currentFilePath}/${name}`;
+        socket.emit('sftp-mkdir', { sessionId: currentFileManagerSessionId, path: targetPath }, (response) => {
+            if (response.error) alert('创建失败: ' + response.error);
+            else loadFileList();
+        });
+    }
+    
+    function renameFile(oldName) {
+        const newName = prompt('请输入新名称:', oldName);
+        if (!newName || newName === oldName) return;
+        const oldPath = currentFilePath === '/' ? `/${oldName}` : `${currentFilePath}/${oldName}`;
+        const newPath = currentFilePath === '/' ? `/${newName}` : `${currentFilePath}/${newName}`;
+        socket.emit('sftp-rename', { sessionId: currentFileManagerSessionId, oldPath, newPath }, (response) => {
+            if (response.error) alert('重命名失败: ' + response.error);
+            else loadFileList();
+        });
+    }
+    
+    function goParent() {
+        if (currentFilePath === '/') return;
+        const parts = currentFilePath.split('/').filter(p => p);
+        parts.pop();
+        currentFilePath = '/' + parts.join('/');
+        loadFileList();
+    }
+    
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function closeModal(modalId) { document.getElementById(modalId).classList.remove('active'); moveServerId = null; }
+    function escapeHtml(str) { if (!str) return ''; return String(str).replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
+    
+    function initSocket() {
+        socket = io({ transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: 9999, reconnectionDelay: 1000, timeout: 60000 });
+        
+        socket.on('connect', () => {
+            sessions.forEach((session, sessionId) => {
+                if (session.status !== 'connected') {
+                    session.status = 'connecting';
+                    session.term.writeln('\x1b[33m🔄 正在重新连接...\x1b[0m');
+                    socket.emit('session-connect', { sessionId, config: { host: session.config.host, port: session.config.port, username: session.config.username, password: session.config.password } });
+                }
+            });
+        });
+        
+        socket.on('session-ready', ({ sessionId }) => {
+            if (sessions.has(sessionId)) {
+                const sess = sessions.get(sessionId);
+                sess.status = 'connected';
+                updateServerStatusUI(sess.serverId, 'online');
+            }
+        });
+        
+        socket.on('session-data', ({ sessionId, data }) => {
+            if (sessions.has(sessionId)) sessions.get(sessionId).term.write(data);
+        });
+        
+        socket.on('sftp-ready', ({ sessionId }) => {
+            if (sessions.has(sessionId)) {
+                sessions.get(sessionId).sftpReady = true;
+                sessions.get(sessionId).term.writeln('\x1b[32m✓ SFTP已就绪，可打开文件管理器\x1b[0m');
+            }
+        });
+        
+        socket.on('sftp-download-complete', ({ sessionId, localPath, fileName }) => {
+            const link = document.createElement('a');
+            link.href = localPath;
+            link.download = fileName;
+            link.click();
+        });
+        
+        socket.on('sftp-download-error', ({ error }) => alert('下载失败: ' + error));
+        socket.on('sftp-upload-error', ({ error }) => { alert('上传失败: ' + error); document.getElementById('uploadProgress').style.display = 'none'; });
+        
+        socket.on('disconnect', () => {
+            sessions.forEach((sess) => {
+                if (sess.status === 'connected') {
+                    sess.status = 'disconnected';
+                    sess.term.writeln('\x1b[31m⚠ 网络中断，正在重连...\x1b[0m');
+                    updateServerStatusUI(sess.serverId, 'offline');
+                }
+            });
+        });
+    }
+    
+    // ==================== 事件绑定 ====================
+    
+    document.getElementById('catToggleBtn').addEventListener('click', toggleCat);
+    document.getElementById('openFileManagerBtn').addEventListener('click', () => {
+        if (!activeSessionId || !sessions.has(activeSessionId)) { alert('请先连接到服务器'); return; }
+        openFileManager(activeSessionId, sessions.get(activeSessionId).config.name);
+    });
+    document.getElementById('closeFileManagerBtn').addEventListener('click', closeFileManager);
+    document.getElementById('fmGoParent').addEventListener('click', goParent);
+    document.getElementById('fmRefresh').addEventListener('click', loadFileList);
+    document.getElementById('fmNewDir').addEventListener('click', newDirectory);
+    document.getElementById('fmDelete').addEventListener('click', deleteSelected);
+    document.getElementById('uploadBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+    document.getElementById('fileInput').addEventListener('change', (e) => { if (e.target.files.length) { uploadFiles(e.target.files); e.target.value = ''; } });
+    
+    const uploadArea = document.querySelector('.upload-area');
+    if (uploadArea) {
+        uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.style.background = '#2d333b'; });
+        uploadArea.addEventListener('dragleave', () => { uploadArea.style.background = ''; });
+        uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.style.background = ''; if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
+    }
+    
+    document.getElementById('fileList').addEventListener('click', (e) => {
+        const fileItem = e.target.closest('.file-item');
+        if (!fileItem) return;
+        document.querySelectorAll('.file-item').forEach(item => item.classList.remove('selected'));
+        fileItem.classList.add('selected');
+    });
+    
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
+    });
+    
+    // 初始化
+    loadConfigFromServer();
+    initSocket();
+    initCat();
+    initResizable();
+    initBackground();
+</script>
+</body>
+</html>
