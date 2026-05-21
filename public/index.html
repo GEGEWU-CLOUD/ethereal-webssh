@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 网站图标 Logo - 修改这里 -->
+	<link rel="icon" type="image/png" href="./logo.png">
     <title>WebSSH - 现代化终端管理</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
@@ -50,6 +52,75 @@
             z-index: -1;
             background: rgba(13, 17, 23, 0.7);
             transition: background-color 0.3s ease;
+        }
+        
+        /* 底层水印 - 位于背景之上，内容之下，完全不干扰点击 可以调整水印位置*/
+        .global-watermark {
+            position: fixed;
+            bottom: 40px;  /* 距离底部距离，数值越大越靠上 */
+            left: 20px;     /* 距离左边距离，数值越大越靠右 */
+            z-index: 0;
+            pointer-events: none;
+            user-select: none;
+            font-family: 'Inter', monospace;
+            opacity: 0.4;
+            transition: opacity 0.2s ease;
+        }
+        
+        /* 右下角水印（可选，增加一个角落） 右下角水印位置*/
+        .global-watermark-bottom {
+            position: fixed;
+            bottom: 30px;    /* 距离底部距离，数值越大越靠上 */
+            right: 60px;      /* 距离右边距离，数值越大越靠左 */
+            z-index: 0;
+            pointer-events: none;
+            user-select: none;
+            font-family: 'Inter', monospace;
+            opacity: 0.35;
+            text-align: right;
+        }
+        
+        .global-watermark .watermark-content,
+        .global-watermark-bottom .watermark-content {
+            background: rgba(0, 0, 0, 0);
+            padding: 8px 16px;
+            border-radius: 12px;
+            backdrop-filter: none;
+        }
+        
+        .global-watermark .watermark-top,
+        .global-watermark-bottom .watermark-top {
+            color: #58a6ff;
+            font-size: 10px;
+            letter-spacing: 2px;
+            font-weight: 500;
+            text-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+        
+        .global-watermark .watermark-main,
+        .global-watermark-bottom .watermark-main {
+            color: #58a6ff;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            margin: 4px 0;
+            text-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+        
+        .global-watermark .watermark-bottom,
+        .global-watermark-bottom .watermark-bottom {
+            color: #58a6ff;
+            font-size: 10px;
+            letter-spacing: 2px;
+            font-weight: 500;
+        }
+        
+        /* 响应式：小屏幕时水印稍微缩小 */
+        @media (max-width: 768px) {
+            .global-watermark, .global-watermark-bottom {
+                opacity: 0.25;
+                transform: scale(0.85);
+            }
         }
         
         /* 主内容区域 */
@@ -214,6 +285,7 @@
             flex: 1;
             overflow-y: auto;
             padding: 8px;
+            padding-bottom: 16px;
         }
         
         .tree-node {
@@ -1073,6 +1145,25 @@
 <div class="global-background" id="globalBackground"></div>
 <div class="global-overlay" id="globalOverlay"></div>
 
+<!-- 底层水印 - 左下角，完全不干扰任何操作 -->
+<div class="global-watermark" id="globalWatermark">
+    <div class="watermark-content">
+        <div class="watermark-top">╔══════════════════╗</div>
+        <div class="watermark-main">✧    ethereal-ssh    ✧</div>
+        <div class="watermark-bottom">╚══════════════════╝</div>
+    </div>
+</div>
+
+<!-- 右下角水印 -->
+<div class="global-watermark-bottom" id="globalWatermarkBottom">
+    <div class="watermark-content">
+        <div class="watermark-top">╔══════════════════════════════════════════════╗</div>
+        <div class="watermark-main">ethereal-ssh · 终端 -------------------------------------------</div>
+		<div class="watermark-main">项目地址：https://github.com/GEGEWU-CLOUD/ethereal-webssh</div>
+        <div class="watermark-bottom">╚══════════════════════════════════════════════╝</div>
+    </div>
+</div>
+
 <!-- 背景设置按钮 -->
 <div class="bg-settings-btn" id="bgSettingsBtn" title="背景设置">🎨</div>
 
@@ -1776,7 +1867,7 @@
         createTerminalTab(server);
     }
     
-    // ==================== 核心：创建终端标签页（修复 vim 显示问题）====================
+    // ==================== 核心：创建终端标签页 ====================
     
     function createTerminalTab(server) {
         const sessionId = `session_${nextSessionId++}`;
@@ -1799,7 +1890,6 @@
         pane.id = paneId;
         container.appendChild(pane);
         
-        // 获取终端容器的实际像素尺寸
         const getTerminalSize = () => {
             const rect = pane.getBoundingClientRect();
             const estimatedCols = Math.max(80, Math.floor(rect.width / 9));
@@ -1808,7 +1898,6 @@
         };
         
         const initialSize = getTerminalSize();
-        console.log(`创建终端 ${displayName}: ${initialSize.cols}x${initialSize.rows}`);
         
         const term = new Terminal({ 
             cursorBlink: true, 
@@ -1829,11 +1918,9 @@
         term.loadAddon(fitAddon);
         term.open(pane);
         
-        // 确保终端尺寸正确
         const doResize = () => {
             try {
                 fitAddon.fit();
-                const newSize = getTerminalSize();
                 if (socket && socket.connected && sessions.has(sessionId)) {
                     const sess = sessions.get(sessionId);
                     if (sess && sess.status === 'connected') {
@@ -1846,13 +1933,11 @@
             } catch(e) { console.log('resize error:', e); }
         };
         
-        // 多次调用确保尺寸正确（解决 vim 显示问题）
         setTimeout(doResize, 50);
         setTimeout(doResize, 200);
         setTimeout(doResize, 500);
         setTimeout(doResize, 1000);
         
-        // 监听终端 resize 事件
         term.onResize((size) => {
             if (socket && socket.connected && sessions.has(sessionId)) {
                 const sess = sessions.get(sessionId);
@@ -1884,7 +1969,7 @@
         });
         
         term.writeln('\x1b[38;2;88;166;255m╔════════════════════════════════════╗\x1b[0m');
-        term.writeln('\x1b[38;2;88;166;255m║   WebSSH 现代化终端管理           ║\x1b[0m');
+        term.writeln('\x1b[38;2;88;166;255m║   WebSSH 现代化终端管理              ║\x1b[0m');
         term.writeln('\x1b[38;2;88;166;255m╚════════════════════════════════════╝\x1b[0m');
         term.writeln('');
         term.writeln(`\x1b[38;2;210;153;34m📡 正在连接到 ${server.username}@${server.host}:${server.port} ...\x1b[0m`);
@@ -1896,7 +1981,6 @@
         switchToTab(sessionId);
         updateServerStatusUI(server.id, 'connecting');
         
-        // 为终端添加右键菜单
         setTimeout(() => {
             const textarea = term.textarea;
             if (textarea) {
