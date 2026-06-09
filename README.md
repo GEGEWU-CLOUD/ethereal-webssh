@@ -46,6 +46,8 @@
 进入配置目录webssh目录下打开cmd
 
 输入即可开始使用
+<img width="957" height="475" alt="image" src="https://github.com/user-attachments/assets/e1932374-7b64-4d81-b1c5-6b78227dc806" />
+
 
 ```bash
 # 安装依赖
